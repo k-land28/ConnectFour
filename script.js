@@ -1,190 +1,212 @@
 const ROWS = 6;
 const COLS = 7;
 
-let board = Array.from({ length: ROWS }, () => Array(COLS).fill(null));
-let currentPlayer = 'red';
-let winCells = [];
+const boardEl = document.getElementById('board');
+const boardWrap = document.getElementById('board-container');
+const resultEl = document.getElementById('result');
+const turnEl = document.getElementById('turn-indicator');
+const resetBtn = document.getElementById('resetBtn');
 
-const boardContainer = document.getElementById('board-container');
-const boardElement = document.getElementById('board');
-const resultElement = document.getElementById('result');
-const turnIndicator = document.getElementById('turn-indicator');
+// Game state
+let board = Array.from({length: ROWS}, () => Array(COLS).fill(null));
+let current = 'red'; // 'red' or 'yellow'
+let gameOver = false;
+let isAnimating = false; // å…¥åŠ›ãƒ­ãƒƒã‚¯ï¼ˆè½ä¸‹ã‚¢ãƒ‹ãƒ¡ä¸­ã¯å…¥åŠ›ä¸å¯ï¼‰
 
-let cellWidth, cellHeight;
-
-// ”Õ–Ê‚ÌƒZƒ‹•E‚‚³‚ğŒvZiƒŒƒXƒ|ƒ“ƒVƒu‘Î‰j
-function updateCellSize() {
-  const rect = boardElement.getBoundingClientRect();
-  cellWidth = rect.width / COLS;
-  cellHeight = rect.height / ROWS;
-}
-
-// ”Õ–Ê‚ğ¶¬‚µ‚ÄƒNƒŠƒbƒNƒCƒxƒ“ƒgİ’è
-function createBoard() {
-  boardElement.innerHTML = '';
+// Build grid
+function buildBoard() {
+  boardEl.innerHTML = '';
   for (let r = 0; r < ROWS; r++) {
     for (let c = 0; c < COLS; c++) {
       const cell = document.createElement('div');
       cell.className = 'cell';
       cell.dataset.row = r;
       cell.dataset.col = c;
-      cell.addEventListener('click', () => handleMove(c));
-      boardElement.appendChild(cell);
+      boardEl.appendChild(cell);
     }
   }
 }
+buildBoard();
+updateTurnText();
 
-// ‹î‚ğ©—R—‰ºƒAƒjƒ[ƒVƒ‡ƒ“‚Å—‚Æ‚·ŠÖ”
-function dropPiece(row, col, color) {
-  return new Promise(resolve => {
-    const piece = document.createElement('div');
-    piece.className = `piece ${color}`;
-    boardElement.appendChild(piece);
+// Metrics
+function getMetrics() {
+  const rect = boardEl.getBoundingClientRect();
+  const cellW = rect.width / COLS;
+  const cellH = rect.height / ROWS;
+  return {rect, cellW, cellH};
+}
+window.addEventListener('resize', () => {});
 
-    // ‰¡ˆÊ’u
-    const left = col * cellWidth + 2; // gap 4px‚Ì”¼•ªƒ}[ƒWƒ“’²®
-    piece.style.left = `${left}px`;
+// Input
+boardWrap.addEventListener('click', (e) => {
+  if (gameOver || isAnimating) return;
+  const {rect, cellW} = getMetrics();
+  const x = e.clientX - rect.left;
+  if (x < 0 || x > rect.width) return;
+  const col = Math.min(COLS - 1, Math.max(0, Math.floor(x / cellW)));
+  dropInColumn(col);
+}, {passive: true});
 
-    // ‰ŠúˆÊ’u‚Í”Õ–Ê‚Ìãi‰æ–ÊŠOj
-    let y = -cellHeight;
-    piece.style.top = `${y}px`;
+// Reset button
+resetBtn.addEventListener('click', resetGame);
 
-    // •¨—“I—‰ºƒVƒ~ƒ…ƒŒ[ƒVƒ‡ƒ“ƒpƒ‰ƒ[ƒ^
-    let velocity = 0;
-    const gravity = 2000; // px/•b^2i’²®‰Âj
-    const targetY = row * cellHeight + 2;
-
-    let lastTime = null;
-
-    function animate(time) {
-      if (!lastTime) lastTime = time;
-      const dt = (time - lastTime) / 1000;
-      lastTime = time;
-
-      velocity += gravity * dt;
-      y += velocity * dt;
-
-      if (y >= targetY) {
-        // ƒoƒEƒ“ƒhŠJn
-        y = targetY;
-        piece.style.top = `${y}px`;
-        bounce();
-        resolve();
-        return;
-      }
-      piece.style.top = `${y}px`;
-      requestAnimationFrame(animate);
-    }
-
-    // ƒoƒEƒ“ƒhƒAƒjƒ[ƒVƒ‡ƒ“iã‰º‚É¬‚³‚­“®‚­j
-    function bounce() {
-      const bounceHeight = cellHeight * 0.2;
-      let up = true;
-      let start = null;
-      const duration = 200;
-
-      function bounceAnim(time) {
-        if (!start) start = time;
-        const elapsed = time - start;
-        const progress = Math.min(elapsed / duration, 1);
-        const offset = up
-          ? bounceHeight * (1 - progress)
-          : bounceHeight * progress;
-
-        piece.style.top = `${targetY - offset}px`;
-
-        if (progress >= 1) {
-          if (up) {
-            up = false;
-            start = time;
-            requestAnimationFrame(bounceAnim);
-          } else {
-            piece.style.top = `${targetY}px`;
-            return;
-          }
-        } else {
-          requestAnimationFrame(bounceAnim);
-        }
-      }
-      requestAnimationFrame(bounceAnim);
-    }
-
-    requestAnimationFrame(animate);
-  });
+function resetGame() {
+  board = Array.from({length: ROWS}, () => Array(COLS).fill(null));
+  Array.from(boardEl.children).forEach(c => c.innerHTML = '');
+  current = 'red';
+  gameOver = false;
+  isAnimating = false;
+  resultEl.textContent = '';
+  updateTurnText();
 }
 
-async function handleMove(col) {
-  if (winCells.length > 0) return;
-
+// Drop
+function dropInColumn(col) {
+  let row = -1;
   for (let r = ROWS - 1; r >= 0; r--) {
-    if (!board[r][col]) {
-      board[r][col] = currentPlayer;
-      await dropPiece(r, col, currentPlayer);
-      if (checkWin(r, col)) {
-        highlightWin();
-        resultElement.textContent = `${capitalize(currentPlayer)} Wins!`;
-        return;
-      }
-      currentPlayer = currentPlayer === 'red' ? 'yellow' : 'red';
-      turnIndicator.textContent = `${capitalize(currentPlayer)}'s Turn`;
+    if (board[r][col] === null) { row = r; break; }
+  }
+  if (row === -1) return; // full
+
+  animateDrop(row, col, current).then(() => {
+    board[row][col] = current;
+    renderDisc(row, col, current);
+
+    const winCells = getWinLine(row, col, current);
+    if (winCells) {
+      gameOver = true;
+      resultEl.textContent = `${capitalize(current)} wins!`;
+      highlightWin(winCells);
       return;
     }
-  }
-}
-
-function checkWin(r, c) {
-  const directions = [
-    [[0,1],[0,-1]],   // ‰¡
-    [[1,0],[-1,0]],   // c
-    [[1,1],[-1,-1]],  // Î‚ß‰E‰º-¶ã
-    [[1,-1],[-1,1]]   // Î‚ß¶‰º-‰Eã
-  ];
-  const player = board[r][c];
-  for (const dir of directions) {
-    let count = 1;
-    const line = [[r,c]];
-    for (const [dr, dc] of dir) {
-      let nr = r + dr;
-      let nc = c + dc;
-      while (nr >= 0 && nr < ROWS && nc >= 0 && nc < COLS && board[nr][nc] === player) {
-        line.push([nr, nc]);
-        count++;
-        nr += dr;
-        nc += dc;
-      }
+    if (isBoardFull()) {
+      gameOver = true;
+      resultEl.textContent = `Draw`;
+      return;
     }
-    if (count >= 4) {
-      winCells = line;
-      return true;
-    }
-  }
-  return false;
-}
 
-function highlightWin() {
-  for (const [r,c] of winCells) {
-    const piece = document.createElement('div');
-    piece.className = `piece ${board[r][c]} glow`;
-    // ˆÊ’u’²®
-    piece.style.left = `${c * cellWidth + 2}px`;
-    piece.style.top = `${r * cellHeight + 2}px`;
-    boardElement.appendChild(piece);
-  }
-}
-
-function capitalize(s) {
-  return s.charAt(0).toUpperCase() + s.slice(1);
-}
-
-// ‰Šú‰»
-function init() {
-  createBoard();
-  updateCellSize();
-  window.addEventListener('resize', () => {
-    updateCellSize();
+    current = (current === 'red') ? 'yellow' : 'red';
+    updateTurnText();
   });
-  resultElement.textContent = '';
-  turnIndicator.textContent = `${capitalize(currentPlayer)}'s Turn`;
 }
 
-init();
+// Physics drop with soft bounce
+function animateDrop(row, col, color) {
+  isAnimating = true;
+
+  const {rect, cellW, cellH} = getMetrics();
+  const tokenSize = Math.min(cellW, cellH) * 0.8;
+  const colCenterX = rect.left + col * cellW + cellW / 2;
+  const targetYpx = rect.top + row * cellH + cellH / 2;
+
+  const token = document.createElement('div');
+  token.className = 'token-float';
+  Object.assign(token.style, {
+    position: 'fixed',
+    width: `${tokenSize}px`,
+    height: `${tokenSize}px`,
+    left: `${colCenterX - tokenSize/2}px`,
+    top: `${rect.top - tokenSize - 8}px`,
+    borderRadius: '50%',
+    pointerEvents: 'none',
+    zIndex: '999',
+    transform: 'scale(0.98)',
+    boxShadow: '0 8px 18px rgba(0,0,0,.45)'
+  });
+  token.style.background = (color === 'red')
+    ? 'radial-gradient(circle at 35% 35%, #ffcccc, #ff3030 60%, #b00000)'
+    : 'radial-gradient(circle at 35% 35%, #fff7cc, #ffd632 60%, #b08800)';
+  document.body.appendChild(token);
+
+  let y = rect.top - tokenSize - 8;
+  let vy = 0;
+  const g = 4200;
+  const bounce = 0.36;
+  const snapV = 160;
+  const maxBounces = 2;
+  let bounces = 0;
+
+  let last = performance.now();
+  return new Promise((resolve) => {
+    function frame(now) {
+      const dt = Math.min(0.03, (now - last) / 1000);
+      last = now;
+
+      vy += g * dt;
+      y += vy * dt;
+
+      const targetTop = targetYpx - tokenSize/2;
+      if (y >= targetTop) {
+        y = targetTop;
+        if (Math.abs(vy) > snapV && bounces < maxBounces) {
+          vy = -vy * bounce;
+          bounces += 1;
+        } else {
+          token.style.top = `${y}px`;
+          token.animate([{transform: 'scale(0.98)'},{transform: 'scale(1)'}], {duration: 90, easing: 'ease-out'});
+          setTimeout(() => {
+            token.remove();
+            isAnimating = false;
+            resolve();
+          }, 90);
+          return;
+        }
+      }
+
+      token.style.top = `${y}px`;
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  });
+}
+
+// Render disc into a cell
+function renderDisc(row, col, color) {
+  const idx = row * COLS + col;
+  const cell = boardEl.children[idx];
+  const disc = document.createElement('div');
+  disc.className = 'disc';
+  disc.style.background = (color === 'red')
+    ? 'radial-gradient(circle at 35% 35%, #ffcccc, #ff3030 60%, #b00000)'
+    : 'radial-gradient(circle at 35% 35%, #fff7cc, #ffd632 60%, #b08800)';
+  cell.appendChild(disc);
+  disc.animate([{transform:'scale(0.7)'},{transform:'scale(1)'}], {duration:120, easing:'ease-out'});
+}
+
+// Win helpers
+function isBoardFull() {
+  return board.every(row => row.every(cell => cell !== null));
+}
+
+// 4æ–¹å‘ã®ã„ãšã‚Œã‹ã§é€£ç¶šãƒ©ã‚¤ãƒ³ã‚’è¿”ã™ï¼ˆãªã‘ã‚Œã° nullï¼‰
+function getWinLine(r, c, color) {
+  const dirs = [[0,1],[1,0],[1,1],[1,-1]];
+  for (const [dr,dc] of dirs) {
+    const line = [[r,c]];
+    // forward
+    let rr=r+dr, cc=c+dc;
+    while (inRange(rr,cc) && board[rr][cc] === color) { line.push([rr,cc]); rr+=dr; cc+=dc; }
+    // backward
+    rr=r-dr; cc=c-dc;
+    while (inRange(rr,cc) && board[rr][cc] === color) { line.unshift([rr,cc]); rr-=dr; cc-=dc; }
+    if (line.length >= 4) return line; // 5é€£ä»¥ä¸Šã‚‚å«ã‚€
+  }
+  return null;
+}
+function inRange(r,c){ return r>=0 && r<ROWS && c>=0 && c<COLS; }
+
+function highlightWin(cells) {
+  // é€£ç¶šãƒ©ã‚¤ãƒ³ã®ã™ã¹ã¦ã‚’ç™ºå…‰ï¼ˆ>=4ï¼‰
+  for (const [r,c] of cells) {
+    const idx = r * COLS + c;
+    const cell = boardEl.children[idx];
+    const disc = cell.querySelector('.disc');
+    if (disc) disc.classList.add('win');
+  }
+}
+
+function updateTurnText() {
+  turnEl.textContent = `${capitalize(current)}'s Turn`;
+}
+function capitalize(s){ return s.charAt(0).toUpperCase() + s.slice(1); }
